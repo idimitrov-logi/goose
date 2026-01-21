@@ -748,10 +748,9 @@ async fn execute_job(
         agent.add_extension(ext.clone()).await?;
     }
 
-    let session = agent
-        .config
-        .session_manager
+    let session = agent_provider
         .create_session(
+            &agent.config.session_manager,
             std::env::current_dir()?,
             format!("Scheduled job: {}", job.id),
             SessionType::Scheduled,

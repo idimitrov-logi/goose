@@ -1,5 +1,17 @@
+// Required when compiled as standalone test "common"; harmless warning when included as module.
+#![recursion_limit = "256"]
+#![allow(unused_attributes)]
+
 use assert_json_diff::{assert_json_matches_no_panic, CompareMode, Config};
+use async_trait::async_trait;
+use fs_err as fs;
+use goose::acp::PermissionDecision;
+use goose::config::{GooseMode, PermissionManager};
+use goose::model::ModelConfig;
+use goose::providers::api_client::{ApiClient, AuthMethod};
+use goose::providers::openai::OpenAiProvider;
 use goose::session_context::SESSION_ID_HEADER;
+use goose_acp::server::{serve, AcpServerConfig, GooseAcpAgent};
 use rmcp::model::{ClientNotification, ClientRequest, Meta, ServerResult};
 use rmcp::service::{NotificationContext, RequestContext, ServiceRole};
 use rmcp::transport::streamable_http_server::{
@@ -9,9 +21,14 @@ use rmcp::{
     handler::server::router::tool::ToolRouter, model::*, tool, tool_handler, tool_router,
     ErrorData as McpError, RoleServer, ServerHandler, Service,
 };
+use sacp::schema::{McpServer, McpServerHttp, ToolCallStatus};
 use std::collections::VecDeque;
+use std::future::Future;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -60,14 +77,19 @@ impl ExpectedSessionId {
 
     /// Calling this ensures incidental requests that might error asynchronously, such as
     /// session rename have coherent session IDs.
-    pub fn assert_no_errors(&self) {
+    pub fn assert_matches(&self, actual: &str) {
+        let result = self.validate(Some(actual));
+        assert!(result.is_ok(), "{}", result.unwrap_err());
         let e = self.errors.lock().unwrap();
         assert!(e.is_empty(), "Session ID validation errors: {:?}", *e);
     }
 }
 
 pub struct OpenAiFixture {
-    pub server: MockServer,
+    _server: MockServer,
+    base_url: String,
+    exchanges: Vec<(String, &'static str)>,
+    queue: Arc<Mutex<VecDeque<(String, &'static str)>>>,
 }
 
 impl OpenAiFixture {
@@ -78,8 +100,7 @@ impl OpenAiFixture {
         expected_session_id: ExpectedSessionId,
     ) -> Self {
         let mock_server = MockServer::start().await;
-        let queue: VecDeque<(String, &'static str)> = exchanges.into_iter().collect();
-        let queue = Arc::new(Mutex::new(queue));
+        let queue = Arc::new(Mutex::new(VecDeque::from(exchanges.clone())));
 
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
@@ -135,14 +156,27 @@ impl OpenAiFixture {
             .mount(&mock_server)
             .await;
 
+        let base_url = mock_server.uri();
         Self {
-            server: mock_server,
+            _server: mock_server,
+            base_url,
+            exchanges,
+            queue,
         }
+    }
+
+    pub fn uri(&self) -> &str {
+        &self.base_url
+    }
+
+    pub fn reset(&self) {
+        let mut queue = self.queue.lock().unwrap();
+        *queue = VecDeque::from(self.exchanges.clone());
     }
 }
 
 #[derive(Clone)]
-pub struct Lookup {
+struct Lookup {
     tool_router: ToolRouter<Lookup>,
 }
 
@@ -198,13 +232,13 @@ impl<R: ServiceRole> HasMeta for NotificationContext<R> {
     }
 }
 
-pub struct ValidatingService<S> {
+struct ValidatingService<S> {
     inner: S,
     expected_session_id: ExpectedSessionId,
 }
 
 impl<S> ValidatingService<S> {
-    pub fn new(inner: S, expected_session_id: ExpectedSessionId) -> Self {
+    fn new(inner: S, expected_session_id: ExpectedSessionId) -> Self {
         Self {
             inner,
             expected_session_id,
@@ -286,4 +320,269 @@ impl McpFixture {
             _handle: handle,
         }
     }
+}
+
+pub async fn spawn_acp_server_in_process(
+    openai_base_url: &str,
+    builtins: &[String],
+    data_root: &Path,
+    goose_mode: GooseMode,
+) -> (
+    tokio::io::DuplexStream,
+    tokio::io::DuplexStream,
+    JoinHandle<()>,
+    Arc<PermissionManager>,
+) {
+    let api_client = ApiClient::new(
+        openai_base_url.to_string(),
+        AuthMethod::BearerToken("test-key".to_string()),
+    )
+    .unwrap();
+    let model_config = ModelConfig::new("gpt-5-nano").unwrap();
+    let provider = OpenAiProvider::new(api_client, model_config);
+
+    let config = AcpServerConfig {
+        provider: Arc::new(provider),
+        builtins: builtins.to_vec(),
+        data_dir: data_root.to_path_buf(),
+        config_dir: data_root.to_path_buf(),
+        goose_mode,
+    };
+
+    let (client_read, server_write) = tokio::io::duplex(64 * 1024);
+    let (server_read, client_write) = tokio::io::duplex(64 * 1024);
+
+    let agent = Arc::new(GooseAcpAgent::with_config(config).await.unwrap());
+    let permission_manager = agent.permission_manager();
+    let handle = tokio::spawn(async move {
+        if let Err(e) = serve(agent, server_read.compat(), server_write.compat_write()).await {
+            tracing::error!("ACP server error: {e}");
+        }
+    });
+
+    (client_read, client_write, handle, permission_manager)
+}
+
+pub struct TestOutput {
+    pub text: String,
+    pub tool_status: Option<ToolCallStatus>,
+}
+
+pub struct TestSessionConfig {
+    pub mcp_servers: Vec<McpServer>,
+    pub builtins: Vec<String>,
+    pub goose_mode: GooseMode,
+    pub data_root: PathBuf,
+}
+
+impl Default for TestSessionConfig {
+    fn default() -> Self {
+        Self {
+            mcp_servers: Vec::new(),
+            builtins: Vec::new(),
+            goose_mode: GooseMode::Auto,
+            data_root: PathBuf::new(),
+        }
+    }
+}
+
+#[async_trait]
+pub trait Session {
+    async fn new(config: TestSessionConfig, openai: OpenAiFixture) -> Self
+    where
+        Self: Sized;
+    fn id(&self) -> &sacp::schema::SessionId;
+    fn reset_openai(&self);
+    fn reset_permissions(&self);
+    async fn prompt(&mut self, text: &str, decision: PermissionDecision) -> TestOutput;
+}
+
+pub async fn run_basic_completion<S: Session>() {
+    let expected_session_id = ExpectedSessionId::default();
+    let openai = OpenAiFixture::new(
+        vec![(
+            r#"</info-msg>\nwhat is 1+1""#.into(),
+            include_str!("./test_data/openai_basic_response.txt"),
+        )],
+        expected_session_id.clone(),
+    )
+    .await;
+
+    let mut session = S::new(TestSessionConfig::default(), openai).await;
+    expected_session_id.set(session.id());
+
+    let output = session
+        .prompt("what is 1+1", PermissionDecision::Cancel)
+        .await;
+    assert!(output.text.contains("2"));
+    expected_session_id.assert_matches(&session.id().0);
+}
+
+pub async fn run_mcp_http_server<S: Session>() {
+    let expected_session_id = ExpectedSessionId::default();
+    let mcp = McpFixture::new(expected_session_id.clone()).await;
+    let openai = OpenAiFixture::new(
+        vec![
+            (
+                r#"</info-msg>\nUse the get_code tool and output only its result.""#.into(),
+                include_str!("./test_data/openai_tool_call_response.txt"),
+            ),
+            (
+                format!(r#""content":"{FAKE_CODE}""#),
+                include_str!("./test_data/openai_tool_result_response.txt"),
+            ),
+        ],
+        expected_session_id.clone(),
+    )
+    .await;
+
+    let config = TestSessionConfig {
+        mcp_servers: vec![McpServer::Http(McpServerHttp::new("lookup", &mcp.url))],
+        ..Default::default()
+    };
+    let mut session = S::new(config, openai).await;
+    expected_session_id.set(session.id());
+
+    let output = session
+        .prompt(
+            "Use the get_code tool and output only its result.",
+            PermissionDecision::Cancel,
+        )
+        .await;
+    assert!(output.text.contains(FAKE_CODE));
+    expected_session_id.assert_matches(&session.id().0);
+}
+
+pub async fn run_builtin_and_mcp<S: Session>() {
+    let expected_session_id = ExpectedSessionId::default();
+    let prompt =
+        "Search for get_code and text_editor tools. Use them to save the code to /tmp/result.txt.";
+    let mcp = McpFixture::new(expected_session_id.clone()).await;
+    let openai = OpenAiFixture::new(
+        vec![
+            (
+                format!(r#"</info-msg>\n{prompt}""#),
+                include_str!("./test_data/openai_builtin_search.txt"),
+            ),
+            (
+                r#"lookup/get_code: Get the code"#.into(),
+                include_str!("./test_data/openai_builtin_read_modules.txt"),
+            ),
+            (
+                r#"lookup[\"get_code\"]({}): string - Get the code"#.into(),
+                include_str!("./test_data/openai_builtin_execute.txt"),
+            ),
+            (
+                r#"Successfully wrote to /tmp/result.txt"#.into(),
+                include_str!("./test_data/openai_builtin_final.txt"),
+            ),
+        ],
+        expected_session_id.clone(),
+    )
+    .await;
+
+    let config = TestSessionConfig {
+        builtins: vec!["code_execution".to_string(), "developer".to_string()],
+        mcp_servers: vec![McpServer::Http(McpServerHttp::new("lookup", &mcp.url))],
+        ..Default::default()
+    };
+
+    let _ = fs::remove_file("/tmp/result.txt");
+
+    let mut session = S::new(config, openai).await;
+    expected_session_id.set(session.id());
+
+    let _ = session.prompt(prompt, PermissionDecision::Cancel).await;
+
+    let result = fs::read_to_string("/tmp/result.txt").unwrap_or_default();
+    assert!(result.contains(FAKE_CODE));
+    expected_session_id.assert_matches(&session.id().0);
+}
+
+pub async fn run_permission_persistence<S: Session>() {
+    let cases = vec![
+        (
+            PermissionDecision::AllowAlways,
+            ToolCallStatus::Completed,
+            "user:\n  always_allow:\n  - lookup__get_code\n  ask_before: []\n  never_allow: []\n",
+        ),
+        (PermissionDecision::AllowOnce, ToolCallStatus::Completed, ""),
+        (
+            PermissionDecision::RejectAlways,
+            ToolCallStatus::Failed,
+            "user:\n  always_allow: []\n  ask_before: []\n  never_allow:\n  - lookup__get_code\n",
+        ),
+        (PermissionDecision::RejectOnce, ToolCallStatus::Failed, ""),
+        (PermissionDecision::Cancel, ToolCallStatus::Failed, ""),
+    ];
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let prompt = "Use the get_code tool and output only its result.";
+    let expected_session_id = ExpectedSessionId::default();
+    let mcp = McpFixture::new(expected_session_id.clone()).await;
+    let openai = OpenAiFixture::new(
+        vec![
+            (
+                prompt.to_string(),
+                include_str!("./test_data/openai_tool_call_response.txt"),
+            ),
+            (
+                format!(r#""content":"{FAKE_CODE}""#),
+                include_str!("./test_data/openai_tool_result_response.txt"),
+            ),
+        ],
+        expected_session_id.clone(),
+    )
+    .await;
+
+    let config = TestSessionConfig {
+        mcp_servers: vec![McpServer::Http(McpServerHttp::new("lookup", &mcp.url))],
+        goose_mode: GooseMode::Approve,
+        data_root: temp_dir.path().to_path_buf(),
+        ..Default::default()
+    };
+
+    let mut session = S::new(config, openai).await;
+    expected_session_id.set(session.id());
+
+    for (decision, expected_status, expected_yaml) in cases {
+        session.reset_openai();
+        session.reset_permissions();
+        let _ = fs::remove_file(temp_dir.path().join("permission.yaml"));
+        let output = session.prompt(prompt, decision).await;
+
+        assert_eq!(
+            output.tool_status.unwrap(),
+            expected_status,
+            "permission decision {:?}",
+            decision
+        );
+        assert_eq!(
+            fs::read_to_string(temp_dir.path().join("permission.yaml")).unwrap_or_default(),
+            expected_yaml,
+            "permission decision {:?}",
+            decision
+        );
+    }
+    expected_session_id.assert_matches(&session.id().0);
+}
+
+pub fn run_test<F>(fut: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    let handle = std::thread::Builder::new()
+        .name("acp-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_stack_size(8 * 1024 * 1024)
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(fut);
+        })
+        .unwrap();
+    handle.join().unwrap();
 }

@@ -8,13 +8,15 @@ use super::utils::{
 use crate::conversation::message::Message;
 use crate::model::ModelConfig;
 use crate::providers::base::{
-    ConfigKey, MessageStream, Provider, ProviderMetadata, ProviderUsage, Usage,
+    ConfigKey, MessageStream, Provider, ProviderFactory, ProviderMetadata, ProviderUsage, Usage,
 };
 use crate::providers::formats::openai::{create_request, get_usage, response_to_message};
 use anyhow::Result;
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use rmcp::model::Tool;
 use serde_json::Value;
+const XAI_PROVIDER_NAME: &str = "xai";
 pub const XAI_API_HOST: &str = "https://api.x.ai/v1";
 pub const XAI_DEFAULT_MODEL: &str = "grok-code-fast-1";
 pub const XAI_KNOWN_MODELS: &[&str] = &[
@@ -65,7 +67,7 @@ impl XaiProvider {
             api_client,
             model,
             supports_streaming: true,
-            name: Self::metadata().name,
+            name: XAI_PROVIDER_NAME.to_string(),
         })
     }
 
@@ -79,11 +81,12 @@ impl XaiProvider {
     }
 }
 
-#[async_trait]
-impl Provider for XaiProvider {
+impl ProviderFactory for XaiProvider {
+    type Provider = Self;
+
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
-            "xai",
+            XAI_PROVIDER_NAME,
             "xAI",
             "Grok models from xAI, including reasoning and multimodal capabilities",
             XAI_DEFAULT_MODEL,
@@ -96,6 +99,13 @@ impl Provider for XaiProvider {
         )
     }
 
+    fn from_env(model: ModelConfig) -> BoxFuture<'static, Result<Self::Provider>> {
+        Box::pin(Self::from_env(model))
+    }
+}
+
+#[async_trait]
+impl Provider for XaiProvider {
     fn get_name(&self) -> &str {
         &self.name
     }

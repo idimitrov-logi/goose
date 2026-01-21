@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::api_client::{ApiClient, AuthMethod, AuthProvider};
 use super::azureauth::{AuthError, AzureAuth};
-use super::base::{ConfigKey, Provider, ProviderMetadata, ProviderUsage, Usage};
+use super::base::{ConfigKey, Provider, ProviderFactory, ProviderMetadata, ProviderUsage, Usage};
 use super::errors::ProviderError;
 use super::formats::openai::{create_request, get_usage, response_to_message};
 use super::retry::ProviderRetry;
@@ -13,8 +13,10 @@ use super::utils::{get_model, handle_response_openai_compat, ImageFormat};
 use crate::conversation::message::Message;
 use crate::model::ModelConfig;
 use crate::providers::utils::RequestLog;
+use futures::future::BoxFuture;
 use rmcp::model::Tool;
 
+const AZURE_PROVIDER_NAME: &str = "azure_openai";
 pub const AZURE_DEFAULT_MODEL: &str = "gpt-4o";
 pub const AZURE_DOC_URL: &str =
     "https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models";
@@ -95,7 +97,7 @@ impl AzureProvider {
             deployment_name,
             api_version,
             model,
-            name: Self::metadata().name,
+            name: AZURE_PROVIDER_NAME.to_string(),
         })
     }
 
@@ -118,11 +120,12 @@ impl AzureProvider {
     }
 }
 
-#[async_trait]
-impl Provider for AzureProvider {
+impl ProviderFactory for AzureProvider {
+    type Provider = Self;
+
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
-            "azure_openai",
+            AZURE_PROVIDER_NAME,
             "Azure OpenAI",
             "Models through Azure OpenAI Service (uses Azure credential chain by default)",
             "gpt-4o",
@@ -137,6 +140,13 @@ impl Provider for AzureProvider {
         )
     }
 
+    fn from_env(model: ModelConfig) -> BoxFuture<'static, Result<Self::Provider>> {
+        Box::pin(Self::from_env(model))
+    }
+}
+
+#[async_trait]
+impl Provider for AzureProvider {
     fn get_name(&self) -> &str {
         &self.name
     }

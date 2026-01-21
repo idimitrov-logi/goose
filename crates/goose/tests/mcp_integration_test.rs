@@ -18,7 +18,7 @@ use test_case::test_case;
 
 use async_trait::async_trait;
 use goose::conversation::message::Message;
-use goose::providers::base::{Provider, ProviderMetadata, ProviderUsage, Usage};
+use goose::providers::base::{Provider, ProviderUsage, Usage};
 use goose::providers::errors::ProviderError;
 use once_cell::sync::Lazy;
 use std::process::Command;
@@ -49,10 +49,6 @@ impl MockProvider {
 
 #[async_trait]
 impl Provider for MockProvider {
-    fn metadata() -> ProviderMetadata {
-        ProviderMetadata::empty()
-    }
-
     fn get_name(&self) -> &str {
         "mock"
     }

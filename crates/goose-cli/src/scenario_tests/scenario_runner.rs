@@ -10,6 +10,7 @@ use goose::agents::{Agent, AgentConfig};
 use goose::config::permission::PermissionManager;
 use goose::config::GooseMode;
 use goose::model::ModelConfig;
+use goose::providers::base::Provider;
 use goose::providers::{create, testprovider::TestProvider};
 use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
@@ -224,10 +225,9 @@ where
         )
         .await;
 
-    let session = agent
-        .config
-        .session_manager
+    let session = provider_arc
         .create_session(
+            &agent.config.session_manager,
             PathBuf::default(),
             "scenario-runner".to_string(),
             SessionType::Hidden,

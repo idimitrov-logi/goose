@@ -80,6 +80,8 @@ fn parse_cli_flag_extensions(
 pub struct SessionBuilderConfig {
     /// Session id, optional need to deduce from context
     pub session_id: Option<String>,
+    pub session_name: Option<String>,
+    pub user_set_name: bool,
     /// Whether to resume an existing session
     pub resume: bool,
     /// Whether to fork an existing session (creates a copy of the original/existing session then resumes the copy)
@@ -122,6 +124,8 @@ impl Default for SessionBuilderConfig {
     fn default() -> Self {
         SessionBuilderConfig {
             session_id: None,
+            session_name: None,
+            user_set_name: false,
             resume: false,
             fork: false,
             no_session: false,
@@ -190,10 +194,9 @@ async fn offer_extension_debugging_help(
     // Create a minimal agent for debugging
     let debug_agent = Agent::new();
 
-    let session = debug_agent
-        .config
-        .session_manager
+    let session = provider
         .create_session(
+            &debug_agent.config.session_manager,
             std::env::current_dir()?,
             "CLI Session".to_string(),
             SessionType::Hidden,
@@ -459,8 +462,13 @@ pub async fn build_session(session_config: SessionBuilderConfig) -> CliSession {
 
     let session_id: String = if session_config.no_session {
         let working_dir = std::env::current_dir().expect("Could not get working directory");
-        let session = session_manager
-            .create_session(working_dir, "CLI Session".to_string(), SessionType::Hidden)
+        let session = new_provider
+            .create_session(
+                &session_manager,
+                working_dir,
+                "CLI Session".to_string(),
+                SessionType::Hidden,
+            )
             .await
             .expect("Could not create session");
         session.id
@@ -486,7 +494,37 @@ pub async fn build_session(session_config: SessionBuilderConfig) -> CliSession {
             }
         }
     } else {
-        session_config.session_id.unwrap()
+        let working_dir = std::env::current_dir().expect("Could not get working directory");
+        let session_name = session_config
+            .session_name
+            .clone()
+            .unwrap_or_else(|| "CLI Session".to_string());
+        let session = new_provider
+            .create_session(
+                &session_manager,
+                working_dir,
+                session_name.clone(),
+                SessionType::User,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                output::render_error(&format!("Failed to create session: {}", e));
+                process::exit(1);
+            });
+
+        if session_config.user_set_name {
+            session_manager
+                .update(&session.id)
+                .user_provided_name(session_name)
+                .apply()
+                .await
+                .unwrap_or_else(|e| {
+                    output::render_error(&format!("Failed to set session name: {}", e));
+                    process::exit(1);
+                });
+        }
+
+        session.id
     };
 
     agent
@@ -661,6 +699,8 @@ mod tests {
     fn test_session_builder_config_creation() {
         let config = SessionBuilderConfig {
             session_id: None,
+            session_name: None,
+            user_set_name: false,
             resume: false,
             fork: false,
             no_session: false,

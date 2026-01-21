@@ -336,7 +336,7 @@ mod tests {
         use goose::agents::SessionConfig;
         use goose::conversation::message::{Message, MessageContent};
         use goose::model::ModelConfig;
-        use goose::providers::base::{Provider, ProviderMetadata, ProviderUsage, Usage};
+        use goose::providers::base::{Provider, ProviderUsage, Usage};
         use goose::providers::errors::ProviderError;
         use goose::session::session_manager::SessionType;
         use rmcp::model::{CallToolRequestParams, Tool};
@@ -392,19 +392,6 @@ mod tests {
 
             fn get_model_config(&self) -> ModelConfig {
                 ModelConfig::new("mock-model").unwrap()
-            }
-
-            fn metadata() -> ProviderMetadata {
-                ProviderMetadata {
-                    name: "mock".to_string(),
-                    display_name: "Mock Provider".to_string(),
-                    description: "Mock provider for testing".to_string(),
-                    default_model: "mock-model".to_string(),
-                    known_models: vec![],
-                    model_doc_link: "".to_string(),
-                    config_keys: vec![],
-                    allows_unlisted_models: false,
-                }
             }
 
             fn get_name(&self) -> &str {

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::base::{ConfigKey, Provider, ProviderMetadata, ProviderUsage};
+use super::base::{ConfigKey, Provider, ProviderFactory, ProviderMetadata, ProviderUsage};
 use super::errors::ProviderError;
 use super::retry::{ProviderRetry, RetryConfig};
 use crate::conversation::message::Message;
@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use aws_sdk_bedrockruntime::config::ProvideCredentials;
 use aws_sdk_bedrockruntime::operation::converse::ConverseError;
 use aws_sdk_bedrockruntime::{types as bedrock, Client};
+use futures::future::BoxFuture;
 use reqwest::header::HeaderValue;
 use rmcp::model::Tool;
 use serde_json::Value;
@@ -21,6 +22,7 @@ use super::formats::bedrock::{
 };
 use crate::session_context::SESSION_ID_HEADER;
 
+const BEDROCK_PROVIDER_NAME: &str = "aws_bedrock";
 pub const BEDROCK_DOC_LINK: &str =
     "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html";
 
@@ -101,7 +103,7 @@ impl BedrockProvider {
             client,
             model,
             retry_config,
-            name: Self::metadata().name,
+            name: BEDROCK_PROVIDER_NAME.to_string(),
         })
     }
 
@@ -206,11 +208,12 @@ impl BedrockProvider {
     }
 }
 
-#[async_trait]
-impl Provider for BedrockProvider {
+impl ProviderFactory for BedrockProvider {
+    type Provider = Self;
+
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
-            "aws_bedrock",
+            BEDROCK_PROVIDER_NAME,
             "Amazon Bedrock",
             "Run models through Amazon Bedrock. Supports AWS SSO profiles - run 'aws sso login --profile <profile-name>' before using. Configure with AWS_PROFILE and AWS_REGION, or use environment variables/credentials.",
             BEDROCK_DEFAULT_MODEL,
@@ -223,6 +226,13 @@ impl Provider for BedrockProvider {
         )
     }
 
+    fn from_env(model: ModelConfig) -> BoxFuture<'static, Result<Self::Provider>> {
+        Box::pin(Self::from_env(model))
+    }
+}
+
+#[async_trait]
+impl Provider for BedrockProvider {
     fn get_name(&self) -> &str {
         &self.name
     }

@@ -172,16 +172,16 @@ async fn create_agent(provider_name: &str, model: &str) -> Result<Agent> {
 
     let agent = Agent::new();
 
+    let provider = goose::providers::create(provider_name, model_config).await?;
     let session_manager = agent.config.session_manager.clone();
-    let init_session = session_manager
+    let init_session = provider
         .create_session(
+            &session_manager,
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
             "Web Agent Initialization".to_string(),
             SessionType::Hidden,
         )
         .await?;
-
-    let provider = goose::providers::create(provider_name, model_config).await?;
     agent.update_provider(provider, &init_session.id).await?;
 
     let enabled_configs = goose::config::get_enabled_extensions();
@@ -290,15 +290,23 @@ async fn serve_index(
     State(state): State<AppState>,
     uri: Uri,
 ) -> Result<Redirect, (http::StatusCode, String)> {
-    let session = state
+    let provider = state
         .agent
-        .config
-        .session_manager
+        .provider()
+        .await
+        .map_err(|err| (http::StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    let session = provider
         .create_session(
+            &state.agent.config.session_manager,
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
             "Web session".to_string(),
             SessionType::User,
         )
+        .await
+        .map_err(|err| (http::StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    state
+        .agent
+        .update_provider(Arc::clone(&provider), &session.id)
         .await
         .map_err(|err| (http::StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
 

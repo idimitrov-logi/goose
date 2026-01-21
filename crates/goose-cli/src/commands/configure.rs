@@ -1433,10 +1433,9 @@ pub async fn configure_tool_permissions_dialog() -> anyhow::Result<()> {
     let agent = Agent::new();
     let new_provider = create(&provider_name, model_config).await?;
 
-    let session = agent
-        .config
-        .session_manager
+    let session = new_provider
         .create_session(
+            &agent.config.session_manager,
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
             "Tool Permission Configuration".to_string(),
             SessionType::Hidden,

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures::future::BoxFuture;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +10,8 @@ use crate::config::base::ConfigValue;
 use crate::conversation::message::Message;
 use crate::conversation::Conversation;
 use crate::model::ModelConfig;
+use crate::permission::PermissionConfirmation;
+use crate::session::{Session, SessionManager, SessionType};
 use crate::utils::safe_truncate;
 use rmcp::model::Tool;
 use utoipa::ToSchema;
@@ -34,6 +37,12 @@ pub fn get_current_model() -> Option<String> {
 }
 
 pub static MSG_COUNT_FOR_SESSION_NAME_GENERATION: usize = 3;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PermissionRouting {
+    ActionRequired,
+    Noop,
+}
 
 /// Information about a model's capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
@@ -343,6 +352,18 @@ impl Usage {
 
 use async_trait::async_trait;
 
+pub trait ProviderFactory: Send + Sync {
+    type Provider: Provider + 'static;
+
+    fn metadata() -> ProviderMetadata
+    where
+        Self: Sized;
+
+    fn from_env(model: ModelConfig) -> BoxFuture<'static, Result<Self::Provider>>
+    where
+        Self: Sized;
+}
+
 /// Trait for LeadWorkerProvider-specific functionality
 pub trait LeadWorkerProviderTrait {
     /// Get information about the lead and worker models for logging
@@ -358,11 +379,6 @@ pub trait LeadWorkerProviderTrait {
 /// Base trait for AI providers (OpenAI, Anthropic, etc)
 #[async_trait]
 pub trait Provider: Send + Sync {
-    /// Get the metadata for this provider type
-    fn metadata() -> ProviderMetadata
-    where
-        Self: Sized;
-
     /// Get the name of this provider instance
     fn get_name(&self) -> &str;
 
@@ -434,6 +450,18 @@ pub trait Provider: Send + Sync {
 
     /// Get the model config from the provider
     fn get_model_config(&self) -> ModelConfig;
+
+    async fn create_session(
+        &self,
+        session_manager: &SessionManager,
+        working_dir: std::path::PathBuf,
+        name: String,
+        session_type: SessionType,
+    ) -> Result<Session> {
+        session_manager
+            .create_session(working_dir, name, session_type)
+            .await
+    }
 
     fn retry_config(&self) -> RetryConfig {
         RetryConfig::default()
@@ -527,6 +555,18 @@ pub trait Provider: Send + Sync {
     }
 
     fn supports_streaming(&self) -> bool {
+        false
+    }
+
+    fn permission_routing(&self) -> PermissionRouting {
+        PermissionRouting::Noop
+    }
+
+    async fn handle_permission_confirmation(
+        &self,
+        _request_id: &str,
+        _confirmation: &PermissionConfirmation,
+    ) -> bool {
         false
     }
 

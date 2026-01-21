@@ -16,10 +16,9 @@ async fn main() -> anyhow::Result<()> {
 
     let agent = Agent::new();
 
-    let session = agent
-        .config
-        .session_manager
+    let session = provider
         .create_session(
+            &agent.config.session_manager,
             PathBuf::default(),
             "max-turn-test".to_string(),
             SessionType::Hidden,

@@ -1,5 +1,7 @@
 use super::api_client::{ApiClient, AuthMethod};
-use super::base::{ConfigKey, ModelInfo, Provider, ProviderMetadata, ProviderUsage, Usage};
+use super::base::{
+    ConfigKey, ModelInfo, Provider, ProviderFactory, ProviderMetadata, ProviderUsage, Usage,
+};
 use super::embedding::{EmbeddingCapable, EmbeddingRequest, EmbeddingResponse};
 use super::errors::ProviderError;
 use super::formats::openai::{create_request, get_usage, response_to_message};
@@ -17,6 +19,7 @@ use crate::conversation::message::Message;
 use anyhow::Result;
 use async_stream::try_stream;
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use futures::{StreamExt, TryStreamExt};
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -31,6 +34,7 @@ use crate::providers::base::MessageStream;
 use crate::providers::utils::RequestLog;
 use rmcp::model::Tool;
 
+const OPEN_AI_PROVIDER_NAME: &str = "openai";
 pub const OPEN_AI_DEFAULT_MODEL: &str = "gpt-4o";
 pub const OPEN_AI_DEFAULT_FAST_MODEL: &str = "gpt-4o-mini";
 pub const OPEN_AI_KNOWN_MODELS: &[(&str, usize)] = &[
@@ -113,7 +117,7 @@ impl OpenAiProvider {
             model,
             custom_headers,
             supports_streaming: true,
-            name: Self::metadata().name,
+            name: OPEN_AI_PROVIDER_NAME.to_string(),
         })
     }
 
@@ -127,7 +131,7 @@ impl OpenAiProvider {
             model,
             custom_headers: None,
             supports_streaming: true,
-            name: Self::metadata().name,
+            name: OPEN_AI_PROVIDER_NAME.to_string(),
         }
     }
 
@@ -217,15 +221,16 @@ impl OpenAiProvider {
     }
 }
 
-#[async_trait]
-impl Provider for OpenAiProvider {
+impl ProviderFactory for OpenAiProvider {
+    type Provider = Self;
+
     fn metadata() -> ProviderMetadata {
         let models = OPEN_AI_KNOWN_MODELS
             .iter()
             .map(|(name, limit)| ModelInfo::new(*name, *limit))
             .collect();
         ProviderMetadata::with_models(
-            "openai",
+            OPEN_AI_PROVIDER_NAME,
             "OpenAI",
             "GPT-4 and other OpenAI models, including OpenAI compatible ones",
             OPEN_AI_DEFAULT_MODEL,
@@ -243,6 +248,13 @@ impl Provider for OpenAiProvider {
         )
     }
 
+    fn from_env(model: ModelConfig) -> BoxFuture<'static, Result<Self::Provider>> {
+        Box::pin(Self::from_env(model))
+    }
+}
+
+#[async_trait]
+impl Provider for OpenAiProvider {
     fn get_name(&self) -> &str {
         &self.name
     }
