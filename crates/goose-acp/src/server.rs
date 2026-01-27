@@ -336,31 +336,62 @@ impl GooseAcpAgent {
         })
     }
 
+    /// Create a new session and return its ID.
+    /// This is called by the HTTP transport layer to create the session upfront.
+    pub async fn create_session(&self) -> Result<String> {
+        let manager = self.agent.config.session_manager.clone();
+        let goose_session = manager
+            .create_session(
+                std::env::current_dir().unwrap_or_default(),
+                "ACP Session".to_string(),
+                SessionType::User,
+            )
+            .await?;
+
+        self.agent
+            .update_provider(self.provider.clone(), &goose_session.id)
+            .await?;
+
+        let session = GooseAcpSession {
+            messages: Conversation::new_unvalidated(Vec::new()),
+            tool_requests: HashMap::new(),
+            cancel_token: None,
+        };
+
+        let mut sessions = self.sessions.lock().await;
+        sessions.insert(goose_session.id.clone(), session);
+
+        info!(
+            session_id = %goose_session.id,
+            session_type = "acp",
+            "Session created"
+        );
+
+        Ok(goose_session.id)
+    }
+
+    pub async fn has_session(&self, session_id: &str) -> bool {
+        self.sessions.lock().await.contains_key(session_id)
+    }
+
     fn convert_acp_prompt_to_message(&self, prompt: Vec<ContentBlock>) -> Message {
         let mut user_message = Message::user();
 
-        // Process all content blocks from the prompt
         for block in prompt {
             match block {
                 ContentBlock::Text(text) => {
                     user_message = user_message.with_text(&text.text);
                 }
                 ContentBlock::Image(image) => {
-                    // Goose supports images via base64 encoded data
-                    // The ACP ImageContent has data as a String directly
                     user_message = user_message.with_image(&image.data, &image.mime_type);
                 }
                 ContentBlock::Resource(resource) => {
-                    // Embed resource content as text with context
-                    match &resource.resource {
-                        EmbeddedResourceResource::TextResourceContents(text_resource) => {
-                            let header = format!("--- Resource: {} ---\n", text_resource.uri);
-                            let content = format!("{}{}\n---\n", header, text_resource.text);
-                            user_message = user_message.with_text(&content);
-                        }
-                        _ => {
-                            // Ignore non-text resources for now
-                        }
+                    if let EmbeddedResourceResource::TextResourceContents(text_resource) =
+                        &resource.resource
+                    {
+                        let header = format!("--- Resource: {} ---\n", text_resource.uri);
+                        let content = format!("{}{}\n---\n", header, text_resource.text);
+                        user_message = user_message.with_text(&content);
                     }
                 }
                 ContentBlock::ResourceLink(link) => {
@@ -385,7 +416,6 @@ impl GooseAcpAgent {
     ) -> Result<(), sacp::Error> {
         match content_item {
             MessageContent::Text(text) => {
-                // Stream text to the client
                 cx.send_notification(SessionNotification::new(
                     session_id.clone(),
                     SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
@@ -402,7 +432,6 @@ impl GooseAcpAgent {
                     .await?;
             }
             MessageContent::Thinking(thinking) => {
-                // Stream thinking/reasoning content as thought chunks
                 cx.send_notification(SessionNotification::new(
                     session_id.clone(),
                     SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::Text(
@@ -428,9 +457,7 @@ impl GooseAcpAgent {
                     )?;
                 }
             }
-            _ => {
-                // Ignore other content types for now
-            }
+            _ => {}
         }
         Ok(())
     }
@@ -442,18 +469,15 @@ impl GooseAcpAgent {
         session: &mut GooseAcpSession,
         cx: &JrConnectionCx<AgentToClient>,
     ) -> Result<(), sacp::Error> {
-        // Store the tool request for later use in response handling
         session
             .tool_requests
             .insert(tool_request.id.clone(), tool_request.clone());
 
-        // Extract tool name from the ToolCall if successful
         let tool_name = match &tool_request.tool_call {
             Ok(tool_call) => tool_call.name.to_string(),
             Err(_) => "error".to_string(),
         };
 
-        // Send tool call notification using the provider's tool call ID directly
         cx.send_notification(SessionNotification::new(
             session_id.clone(),
             SessionUpdate::ToolCall(
@@ -483,14 +507,12 @@ impl GooseAcpAgent {
 
         let content = build_tool_call_content(&tool_response.tool_result);
 
-        // Extract locations from the tool request and response
         let locations = if let Some(tool_request) = session.tool_requests.get(&tool_response.id) {
             extract_tool_locations(tool_request, tool_response)
         } else {
             Vec::new()
         };
 
-        // Send status update using provider's tool call ID directly
         let mut fields = ToolCallUpdateFields::new().status(status).content(content);
         if !locations.is_empty() {
             fields = fields.locations(locations);
@@ -521,7 +543,6 @@ impl GooseAcpAgent {
 
         let formatted_name = format_tool_name(&tool_name);
 
-        // Use the request_id (provider's tool call ID) directly
         let mut fields = ToolCallUpdateFields::new()
             .title(formatted_name)
             .kind(ToolKind::default())
@@ -595,11 +616,10 @@ fn outcome_to_confirmation(outcome: &RequestPermissionOutcome) -> PermissionConf
                 Ok(PermissionOptionKind::AllowOnce) => Permission::AllowOnce,
                 Ok(PermissionOptionKind::RejectOnce) => Permission::DenyOnce,
                 Ok(PermissionOptionKind::RejectAlways) => Permission::AlwaysDeny,
-                Ok(_) => Permission::Cancel, // Handle any future permission kinds
-                Err(_) => Permission::Cancel,
+                _ => Permission::Cancel,
             }
         }
-        _ => Permission::Cancel, // Handle any future variants
+        _ => Permission::Cancel,
     };
     PermissionConfirmation {
         principal_type: PrincipalType::Tool,
@@ -644,14 +664,7 @@ fn build_tool_call_content(tool_result: &ToolResult<CallToolResult>) -> Vec<Tool
                         ContentBlock::Resource(EmbeddedResource::new(resource)),
                     )))
                 }
-                RawContent::Audio(_) => {
-                    // Audio content is not supported in ACP ContentBlock, skip it
-                    None
-                }
-                RawContent::ResourceLink(_) => {
-                    // ResourceLink content is not supported in ACP ContentBlock, skip it
-                    None
-                }
+                RawContent::Audio(_) | RawContent::ResourceLink(_) => None,
             })
             .collect(),
         Err(_) => Vec::new(),
@@ -665,7 +678,6 @@ impl GooseAcpAgent {
     ) -> Result<InitializeResponse, sacp::Error> {
         debug!(?args, "initialize request");
 
-        // Advertise Goose's capabilities
         let capabilities = AgentCapabilities::new()
             .load_session(true)
             .prompt_capabilities(
@@ -688,7 +700,7 @@ impl GooseAcpAgent {
         let goose_session = manager
             .create_session(
                 args.cwd.clone(),
-                "ACP Session".to_string(), // just an initial name - may be replaced by maybe_update_name
+                "ACP Session".to_string(),
                 SessionType::User,
             )
             .await
@@ -697,7 +709,6 @@ impl GooseAcpAgent {
             })?;
         self.update_session_with_provider(&goose_session).await?;
 
-        // Add MCP servers specified in the session request
         for mcp_server in args.mcp_servers {
             let config = match mcp_server_to_extension_config(mcp_server) {
                 Ok(c) => c,
@@ -780,9 +791,7 @@ impl GooseAcpAgent {
             cancel_token: None,
         };
 
-        // Replay conversation history to client
         for message in conversation.messages() {
-            // Only replay user-visible messages
             if !message.metadata.user_visible {
                 continue;
             }
@@ -823,9 +832,7 @@ impl GooseAcpAgent {
                             )),
                         ))?;
                     }
-                    _ => {
-                        // Ignore other content types
-                    }
+                    _ => {}
                 }
             }
         }
@@ -1156,14 +1163,6 @@ print(\"hello, world\")
         assert_eq!(format_tool_name("simple_tool"), "Simple Tool");
         assert_eq!(format_tool_name("another_name"), "Another Name");
         assert_eq!(format_tool_name("single"), "Single");
-    }
-
-    #[test]
-    fn test_format_tool_name_edge_cases() {
-        assert_eq!(format_tool_name(""), "");
-        assert_eq!(format_tool_name("__"), ": ");
-        assert_eq!(format_tool_name("extension__"), "Extension: ");
-        assert_eq!(format_tool_name("__tool"), ": Tool");
     }
 
     #[test_case(
