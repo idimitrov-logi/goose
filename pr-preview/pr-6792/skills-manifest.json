@@ -1,0 +1,96 @@
+{
+  "skills": [
+    {
+      "id": "api-setup",
+      "name": "api-setup",
+      "description": "Set up API integration with configuration and helper scripts",
+      "author": "goose",
+      "version": "1.0",
+      "tags": [
+        "api",
+        "integration",
+        "setup"
+      ],
+      "content": "\n# API Setup\n\nThis skill helps you set up a new API integration with our standard configuration.\n\n## Steps\n\n1. Run `setup.sh <api-name>` to create the integration directory\n2. Copy `templates/config.template.json` to your integration directory\n3. Update the config with your API credentials\n4. Test the connection\n\n## Configuration\n\nThe config template includes:\n\n- `api_key`: Your API key (get from the provider's dashboard)\n- `endpoint`: API endpoint URL\n- `timeout`: Request timeout in seconds (default: 30)\n\n## Verification\n\nAfter setup, verify:\n\n- [ ] Config file is valid JSON\n- [ ] API key is set and not a placeholder\n- [ ] Test connection succeeds\n\n## Troubleshooting\n\n### Connection Timeout\n\nIf you experience connection timeouts:\n\n1. Check your network connection\n2. Verify the endpoint URL is correct\n3. Increase the timeout value in config\n\n### Authentication Errors\n\nIf you get 401/403 errors:\n\n1. Verify your API key is correct\n2. Check if the key has the required permissions\n3. Ensure the key hasn't expired\n",
+      "hasSupporting": true,
+      "supportingFiles": [
+        "setup.sh",
+        "templates/config.template.json"
+      ],
+      "supportingFilesType": "scripts",
+      "installMethod": "npx-multi",
+      "installCommand": "npx skills add https://github.com/block/Agent-Skills --skill api-setup",
+      "viewSourceUrl": "https://github.com/block/Agent-Skills/tree/main/api-setup",
+      "repoUrl": "https://github.com/block/Agent-Skills",
+      "isCommunity": false
+    },
+    {
+      "id": "code-review",
+      "name": "code-review",
+      "description": "Comprehensive code review checklist for pull requests",
+      "author": "goose",
+      "version": "1.0",
+      "tags": [
+        "development",
+        "quality",
+        "review"
+      ],
+      "content": "\n# Code Review Checklist\n\nWhen reviewing code, check each of these areas:\n\n## Functionality\n\n- [ ] Code does what the PR description claims\n- [ ] Edge cases are handled\n- [ ] Error handling is appropriate\n\n## Code Quality\n\n- [ ] Follows project style guide\n- [ ] No hardcoded values that should be configurable\n- [ ] Functions are focused and well-named\n\n## Testing\n\n- [ ] New functionality has tests\n- [ ] Tests are meaningful, not just for coverage\n- [ ] Existing tests still pass\n\n## Security\n\n- [ ] No credentials or secrets in code\n- [ ] User input is validated\n- [ ] SQL queries are parameterized\n\n## Performance\n\n- [ ] No obvious performance issues\n- [ ] Database queries are optimized\n- [ ] No unnecessary loops or iterations\n\n## Documentation\n\n- [ ] Public APIs are documented\n- [ ] Complex logic has comments explaining \"why\"\n- [ ] README updated if needed\n",
+      "hasSupporting": false,
+      "supportingFiles": [],
+      "supportingFilesType": "none",
+      "installMethod": "npx-multi",
+      "installCommand": "npx skills add https://github.com/block/Agent-Skills --skill code-review",
+      "viewSourceUrl": "https://github.com/block/Agent-Skills/tree/main/code-review",
+      "repoUrl": "https://github.com/block/Agent-Skills",
+      "isCommunity": false
+    },
+    {
+      "id": "testing-strategy",
+      "name": "testing-strategy",
+      "description": "Guidelines for writing effective tests in this project",
+      "author": "goose",
+      "version": "1.0",
+      "tags": [
+        "testing",
+        "development",
+        "quality"
+      ],
+      "content": "\n# Testing Guidelines\n\n## Unit Tests\n\n- Test one thing per test\n- Use descriptive test names: `test_user_creation_fails_with_invalid_email`\n- Mock external dependencies\n- Keep tests fast and isolated\n\n## Integration Tests\n\n- Test API endpoints with realistic data\n- Verify database state changes\n- Clean up test data after each test\n- Use test fixtures for common scenarios\n\n## Running Tests\n\n```bash\n# Run all tests\nnpm test\n\n# Run unit tests only\nnpm test:unit\n\n# Run integration tests (requires database)\nnpm test:integration\n\n# Run tests with coverage\nnpm test:coverage\n```\n\n## Test Structure\n\n```\ntests/\n├── unit/           # Fast, isolated unit tests\n├── integration/    # Tests requiring external services\n├── fixtures/       # Shared test data\n└── helpers/        # Test utilities\n```\n\n## Best Practices\n\n1. **Arrange-Act-Assert**: Structure tests clearly\n2. **One assertion per test**: When possible, test one behavior\n3. **Descriptive names**: Test names should describe the scenario\n4. **No test interdependence**: Tests should run in any order\n5. **Clean state**: Each test starts with a known state\n\n## Coverage Goals\n\n- Aim for 80%+ line coverage\n- Focus on critical paths first\n- Don't sacrifice test quality for coverage numbers\n",
+      "hasSupporting": false,
+      "supportingFiles": [],
+      "supportingFilesType": "none",
+      "installMethod": "npx-multi",
+      "installCommand": "npx skills add https://github.com/block/Agent-Skills --skill testing-strategy",
+      "viewSourceUrl": "https://github.com/block/Agent-Skills/tree/main/testing-strategy",
+      "repoUrl": "https://github.com/block/Agent-Skills",
+      "isCommunity": false
+    },
+    {
+      "id": "x-algorithm-strategy",
+      "name": "X Algorithm Strategy",
+      "description": "Optimize X (Twitter) posts for the For You feed algorithm - provides scoring rules, content strategy, and post templates for developer audiences",
+      "author": "Angie Jones",
+      "version": "1.0",
+      "tags": [
+        "social-media",
+        "marketing",
+        "content-strategy"
+      ],
+      "content": "\n# X Algorithm Content Strategy\n\nThis skill helps you create X (Twitter) posts optimized for the For You feed algorithm, specifically targeting developer audiences.\n\n## Algorithm Overview\n\nX's recommendation system uses a **Grok-powered transformer model** that predicts engagement probabilities. The final score is:\n\n```\nFinal Score = Σ (weight × P(action))\n```\n\n## Engagement Signals\n\n### Positive Signals (boost your content)\n| Signal | Action |\n|--------|--------|\n| `P(favorite)` | Likes |\n| `P(reply)` | Replies - **high weight** |\n| `P(repost)` | Retweets |\n| `P(quote)` | Quote tweets - **high weight** |\n| `P(share)` | Shares via DM, copy link |\n| `P(click)` | Tweet expansion clicks |\n| `P(profile_click)` | Profile visits |\n| `P(video_view)` | Video quality views (VQV) |\n| `P(photo_expand)` | Photo expansion |\n| `P(dwell)` | Time spent reading |\n| `P(follow_author)` | New followers |\n\n### Negative Signals (hurt your content)\n| Signal | Action |\n|--------|--------|\n| `P(not_interested)` | \"Not interested\" clicks |\n| `P(block_author)` | Blocks |\n| `P(mute_author)` | Mutes |\n| `P(report)` | Reports |\n\n## Content Strategy Rules\n\n### 1. Optimize for Engagement Depth\nCreate content that drives multiple engagement types:\n- Ask questions to drive replies\n- Share insights worth quote-tweeting\n- Include content that increases dwell time\n\n### 2. Video Gets Special Treatment\nThe algorithm has a dedicated `VQV_WEIGHT` for videos. Consider:\n- Demo videos of products/features\n- Screen recordings of workflows\n- Quick tutorials\n\n### 3. Avoid Negative Signals\n- Don't spam or over-post (triggers mutes)\n- Stay focused on developer value (avoid off-topic controversy)\n- Don't be overly promotional\n\n### 4. Author Diversity Penalty\nThe algorithm penalizes multiple posts from the same author in a feed:\n```\nmultiplier = (1.0 - floor) × decay^position + floor\n```\n**Quality over quantity** - space out posts, let one perform before posting another.\n\n### 5. In-Network Priority\nContent from followed accounts gets priority. Build genuine followers in the dev community.\n\n### 6. Freshness Matters\nPosts older than a threshold get filtered. Post when developers are active:\n- Weekday mornings (9-11am)\n- Lunch breaks (12-1pm)\n- After work (5-7pm)\n\n## Content Types for Developers\n\n| Type | Why It Works |\n|------|--------------|\n| Build logs | High dwell time, replies, profile clicks |\n| Hot takes on dev tools | Replies, quote tweets, shares |\n| Code snippets with context | Photo expand, dwell |\n| \"TIL\" moments | Relatable, shareable |\n| Demo videos | Video quality views, shares |\n| Open source updates | Profile clicks, follows, reposts |\n| Bug stories | High engagement across all metrics |\n\n## Post Templates\n\n### Build in Public\n```\n🦆 Just shipped [feature] in [project]\n\nThe tricky part was [technical challenge]\n\nHere's how we solved it: [brief explanation]\n\nWhat would you have done differently?\n```\n\n### Developer Pain Point\n```\nUnpopular opinion: [controversial dev take]\n\nHere's why: [reasoning]\n\nAm I wrong? Tell me why 👇\n```\n\n### Show Don't Tell\n```\n[Video/GIF of product doing something cool]\n\nNo setup. No config. Just works.\n\nTry it: [link]\n```\n\n### TIL Format\n```\nTIL: [surprising technical fact]\n\nI always thought [common misconception]\n\nBut actually [the truth + why it matters]\n\nThread 🧵\n```\n\n### Bug Story\n```\nThis bug took me [time] to find 😅\n\nSymptoms: [what was happening]\nWhat I tried: [failed attempts]\nThe actual cause: [surprising root cause]\n\nLesson learned: [takeaway]\n```\n\n## Checklist Before Posting\n\n- [ ] Does this provide genuine value to developers?\n- [ ] Is there a hook that encourages replies or quotes?\n- [ ] Have I spaced this out from my last post?\n- [ ] Is the timing good for developer audiences?\n- [ ] Does this avoid triggering mutes/blocks (spam, off-topic controversy)?\n- [ ] For threads: Is the first tweet compelling enough to stand alone?\n\n## Keywords to Avoid\n\nMany developers mute these - use sparingly or avoid:\n- Excessive emojis or hype language\n- \"10x\", \"game-changer\", \"revolutionary\"\n- Generic marketing speak\n- Crypto/Web3 terms (unless relevant)\n\n## Source\n\nBased on analysis of the open-sourced X algorithm: https://github.com/xai-org/x-algorithm\n",
+      "hasSupporting": false,
+      "supportingFiles": [],
+      "supportingFilesType": "none",
+      "installMethod": "npx-multi",
+      "installCommand": "npx skills add https://github.com/block/Agent-Skills --skill x-algorithm-strategy",
+      "viewSourceUrl": "https://github.com/block/Agent-Skills/tree/main/x-algorithm-strategy",
+      "repoUrl": "https://github.com/block/Agent-Skills",
+      "isCommunity": true
+    }
+  ],
+  "generatedAt": "2026-01-29T07:54:43.245Z",
+  "count": 4,
+  "officialCount": 4,
+  "externalCount": 0,
+  "sourceRepo": "https://github.com/block/Agent-Skills"
+}
